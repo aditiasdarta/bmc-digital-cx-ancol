@@ -48,6 +48,11 @@
   .selection-controls>span{font-size:11px;color:var(--muted);font-weight:700;margin-right:2px}
   .selection-controls button{min-width:34px;padding:8px 9px}
   .selection-controls output{min-width:46px;font-size:11px;color:var(--muted);text-align:right}
+  .format-controls{display:flex;align-items:center;gap:5px;padding-left:8px;border-left:1px solid var(--line)}
+  .format-controls button{min-width:34px;padding:8px 9px}
+  .format-controls .format-bold{font-weight:900}
+  .format-controls .format-italic{font-style:italic}
+  #saveStatus{font-size:11px;color:var(--muted);font-weight:700;min-width:64px}
   .workspace{padding:20px;overflow:auto}
   .scale-wrap{width:min(1600px,100%);margin:0 auto}
   #canvas{
@@ -151,7 +156,16 @@
     <button type="button" class="selection-font-btn" onclick="changeSelectedFont(1)" title="Perbesar teks yang diblok">A+</button>
     <output id="selectionFontLabel">Blok teks</output>
   </div>
-  <div class="hint">Klik teks langsung untuk edit · Ctrl/Cmd+Enter = export PNG</div>
+  <div class="format-controls" aria-label="Format teks">
+    <button type="button" class="format-bold" onclick="runCommand('bold')" title="Bold">B</button>
+    <button type="button" class="format-italic" onclick="runCommand('italic')" title="Italic">I</button>
+    <button type="button" onclick="runCommand('insertUnorderedList')" title="Bullet list">• List</button>
+    <button type="button" onclick="runCommand('removeFormat')" title="Hapus format">Clear</button>
+    <button type="button" onclick="runCommand('undo')" title="Undo">↶</button>
+    <button type="button" onclick="runCommand('redo')" title="Redo">↷</button>
+    <output id="saveStatus">Tersimpan</output>
+  </div>
+  <div class="hint">Klik teks untuk edit · perubahan tersimpan otomatis</div>
 </div>
 
 <div class="workspace">
@@ -310,6 +324,33 @@
 const canvas = document.getElementById('canvas');
 const scaleWrap = document.getElementById('scaleWrap');
 const loadFile = document.getElementById('loadFile');
+const STORAGE_KEY = 'bmc-digital-cx-ancol-draft-v1';
+let saveTimer;
+
+function setSaveStatus(text){document.getElementById('saveStatus').textContent=text}
+function saveLocalDraft(){
+  localStorage.setItem(STORAGE_KEY,JSON.stringify({data:collectData(),fontSize:preferredFontSize}));
+  setSaveStatus('Tersimpan');
+}
+function scheduleLocalSave(){
+  setSaveStatus('Menyimpan…');
+  clearTimeout(saveTimer);
+  saveTimer=setTimeout(saveLocalDraft,300);
+}
+function restoreLocalDraft(){
+  try{
+    const draft=JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if(!draft)return;
+    applyData(draft.data || {});
+    if(Number.isFinite(draft.fontSize))preferredFontSize=draft.fontSize;
+    setSaveStatus('Draft dimuat');
+  }catch(err){localStorage.removeItem(STORAGE_KEY)}
+}
+function runCommand(command){
+  restoreSelection();
+  document.execCommand(command,false,null);
+  scheduleLocalSave();
+}
 
 function fitCanvas(){
   const maxW = Math.min(1600, window.innerWidth - 40);
@@ -358,11 +399,18 @@ loadFile.addEventListener('change', async e=>{
   try{
     const json = JSON.parse(await file.text());
     applyData(json.data || json);
+    scheduleLocalSave();
   }catch(err){ alert('File JSON tidak valid.');}
   loadFile.value='';
 });
 function resetCanvas(){
-  if(confirm('Reset semua isi ke template awal?')) applyData(initial);
+  if(confirm('Reset semua isi ke template awal?')){
+    applyData(initial);
+    preferredFontSize=13;
+    localStorage.removeItem(STORAGE_KEY);
+    autoFitAll(false);
+    setSaveStatus('Template awal');
+  }
 }
 
 let preferredFontSize=13;
@@ -390,6 +438,7 @@ function autoFitAll(showStatus=false){
 function changeFont(delta){
   preferredFontSize=Math.max(10,Math.min(15,preferredFontSize+delta));
   autoFitAll(false);
+  scheduleLocalSave();
 }
 let savedSelection=null;
 function selectionInsideCanvas(sel){
@@ -421,14 +470,16 @@ function changeSelectedFont(delta){
   }
   const newRange=document.createRange();newRange.selectNodeContents(span);sel.removeAllRanges();sel.addRange(newRange);savedSelection=newRange.cloneRange();
   document.getElementById('selectionFontLabel').textContent=(Math.round(next*10)/10).toString()+' px';
+  scheduleLocalSave();
 }
 document.addEventListener('selectionchange',()=>{if(!document.querySelector('.selection-controls:hover'))rememberSelection()});
 document.querySelectorAll('.selection-font-btn').forEach(btn=>btn.addEventListener('mousedown',e=>e.preventDefault()));
 let fitTimer;
-document.querySelectorAll('.card .body').forEach(el=>el.addEventListener('input',()=>{
-  clearTimeout(fitTimer);fitTimer=setTimeout(()=>fitBody(el),120);
+document.querySelectorAll('[contenteditable="true"]').forEach(el=>el.addEventListener('input',()=>{
+  if(el.classList.contains('body')){clearTimeout(fitTimer);fitTimer=setTimeout(()=>fitBody(el),120)}
+  scheduleLocalSave();
 }));
-window.addEventListener('load',()=>autoFitAll(false));
+window.addEventListener('load',()=>{restoreLocalDraft();autoFitAll(false)});
 function buildSVG(){
   const clone = canvas.cloneNode(true);
   clone.style.transform='none';
